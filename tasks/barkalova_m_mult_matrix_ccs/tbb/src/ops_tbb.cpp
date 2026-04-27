@@ -1,5 +1,9 @@
 #include "barkalova_m_mult_matrix_ccs/tbb/include/ops_tbb.hpp"
 
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
+
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -25,13 +29,19 @@ bool BarkalovaMMultMatrixCcsTBB::ValidationImpl() {
   if (A.rows <= 0 || A.cols <= 0 || B.rows <= 0 || B.cols <= 0) {
     return false;
   }
-  if (A.col_ptrs.size() != static_cast<size_t>(A.cols) + 1 || B.col_ptrs.size() != static_cast<size_t>(B.cols) + 1) {
+  if (A.col_ptrs.size() != static_cast<size_t>(A.cols) + 1) {
     return false;
   }
-  if (A.col_ptrs.empty() || A.col_ptrs[0] != 0 || B.col_ptrs.empty() || B.col_ptrs[0] != 0) {
+  if (B.col_ptrs.size() != static_cast<size_t>(B.cols) + 1) {
     return false;
   }
-  if (std::cmp_not_equal(A.nnz, A.values.size()) || std::cmp_not_equal(B.nnz, B.values.size())) {
+  if (A.col_ptrs[0] != 0 || B.col_ptrs[0] != 0) {
+    return false;
+  }
+  if (A.nnz != static_cast<int>(A.values.size())) {
+    return false;
+  }
+  if (B.nnz != static_cast<int>(B.values.size())) {
     return false;
   }
   return true;
@@ -75,36 +85,12 @@ void TransponirMatr(const CCSMatrix &a, CCSMatrix &at) {
     for (int i = a.col_ptrs[col]; i < a.col_ptrs[col + 1]; i++) {
       int row = a.row_indices[i];
       Complex val = a.values[i];
-
       int pos = at.col_ptrs[row] + current_pos[row];
       at.values[pos] = val;
       at.row_indices[pos] = col;
       current_pos[row]++;
     }
   }
-}
-
-Complex ComputeScalarProduct(const CCSMatrix &at, const CCSMatrix &b, int row_a, int col_b) {
-  Complex sum = Complex(0.0, 0.0);
-
-  int ks = at.col_ptrs[row_a];
-  int ls = b.col_ptrs[col_b];
-  int kf = at.col_ptrs[row_a + 1];
-  int lf = b.col_ptrs[col_b + 1];
-
-  while ((ks < kf) && (ls < lf)) {
-    if (at.row_indices[ks] < b.row_indices[ls]) {
-      ks++;
-    } else if (at.row_indices[ks] > b.row_indices[ls]) {
-      ls++;
-    } else {
-      sum += at.values[ks] * b.values[ls];
-      ks++;
-      ls++;
-    }
-  }
-
-  return sum;
 }
 
 bool IsNonZero(const Complex &val) {
@@ -117,7 +103,77 @@ bool BarkalovaMMultMatrixCcsTBB::RunImpl() {
   const auto &a = GetInput().first;
   const auto &b = GetInput().second;
 
-  return true;
+  try {
+    CCSMatrix at;
+    TransponirMatr(a, at);
+
+    CCSMatrix c;
+    c.rows = a.rows;
+    c.cols = b.cols;
+
+    std::vector<std::vector<int>> col_rows(c.cols);
+    std::vector<std::vector<Complex>> col_vals(c.cols);
+
+    tbb::parallel_for(tbb::blocked_range<int>(0, c.cols), [&](const tbb::blocked_range<int> &range) {
+      for (int j = range.begin(); j < range.end(); ++j) {
+        std::vector<int> rows;
+        std::vector<Complex> vals;
+
+        rows.reserve(100);
+        vals.reserve(100);
+
+        for (int i = 0; i < at.cols; i++) {
+          Complex sum = Complex(0.0, 0.0);
+
+          int ks = at.col_ptrs[i];
+          int ls = b.col_ptrs[j];
+          int kf = at.col_ptrs[i + 1];
+          int lf = b.col_ptrs[j + 1];
+
+          while ((ks < kf) && (ls < lf)) {
+            if (at.row_indices[ks] < b.row_indices[ls]) {
+              ks++;
+            } else if (at.row_indices[ks] > b.row_indices[ls]) {
+              ls++;
+            } else {
+              sum += at.values[ks] * b.values[ls];
+              ks++;
+              ls++;
+            }
+          }
+
+          if (IsNonZero(sum)) {
+            rows.push_back(i);
+            vals.push_back(sum);
+          }
+        }
+
+        col_rows[j] = std::move(rows);
+        col_vals[j] = std::move(vals);
+      }
+    });
+
+    std::vector<int> col_ptrs = {0};
+    std::vector<int> row_indices;
+    std::vector<Complex> values;
+
+    for (int j = 0; j < c.cols; j++) {
+      row_indices.insert(row_indices.end(), col_rows[j].begin(), col_rows[j].end());
+      values.insert(values.end(), col_vals[j].begin(), col_vals[j].end());
+      col_ptrs.push_back(static_cast<int>(values.size()));
+    }
+
+    c.values = std::move(values);
+    c.row_indices = std::move(row_indices);
+    c.col_ptrs = std::move(col_ptrs);
+    c.nnz = static_cast<int>(c.values.size());
+
+    GetOutput() = c;
+    return true;
+
+  } catch (const std::exception &) {
+    return false;
+  }
 }
 
 bool BarkalovaMMultMatrixCcsTBB::PostProcessingImpl() {
