@@ -3,7 +3,6 @@
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
 
-#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -38,10 +37,10 @@ bool BarkalovaMMultMatrixCcsTBB::ValidationImpl() {
   if (A.col_ptrs[0] != 0 || B.col_ptrs[0] != 0) {
     return false;
   }
-  if (A.nnz != static_cast<int>(A.values.size())) {
+  if (static_cast<size_t>(A.nnz) != A.values.size()) {
     return false;
   }
-  if (B.nnz != static_cast<int>(B.values.size())) {
+  if (static_cast<size_t>(B.nnz) != B.values.size()) {
     return false;
   }
   return true;
@@ -97,6 +96,38 @@ bool IsNonZero(const Complex &val) {
   return std::abs(val.real()) > kEpsilon || std::abs(val.imag()) > kEpsilon;
 }
 
+void ProcessColumn(int j, const CCSMatrix &at, const CCSMatrix &b, std::vector<int> &out_rows,
+                   std::vector<Complex> &out_vals) {
+  out_rows.reserve(100);
+  out_vals.reserve(100);
+
+  for (int i = 0; i < at.cols; i++) {
+    Complex sum = Complex(0.0, 0.0);
+
+    int ks = at.col_ptrs[i];
+    int ls = b.col_ptrs[j];
+    int kf = at.col_ptrs[i + 1];
+    int lf = b.col_ptrs[j + 1];
+
+    while ((ks < kf) && (ls < lf)) {
+      if (at.row_indices[ks] < b.row_indices[ls]) {
+        ks++;
+      } else if (at.row_indices[ks] > b.row_indices[ls]) {
+        ls++;
+      } else {
+        sum += at.values[ks] * b.values[ls];
+        ks++;
+        ls++;
+      }
+    }
+
+    if (IsNonZero(sum)) {
+      out_rows.push_back(i);
+      out_vals.push_back(sum);
+    }
+  }
+}
+
 }  // namespace
 
 bool BarkalovaMMultMatrixCcsTBB::RunImpl() {
@@ -116,40 +147,7 @@ bool BarkalovaMMultMatrixCcsTBB::RunImpl() {
 
     tbb::parallel_for(tbb::blocked_range<int>(0, c.cols), [&](const tbb::blocked_range<int> &range) {
       for (int j = range.begin(); j < range.end(); ++j) {
-        std::vector<int> rows;
-        std::vector<Complex> vals;
-
-        rows.reserve(100);
-        vals.reserve(100);
-
-        for (int i = 0; i < at.cols; i++) {
-          Complex sum = Complex(0.0, 0.0);
-
-          int ks = at.col_ptrs[i];
-          int ls = b.col_ptrs[j];
-          int kf = at.col_ptrs[i + 1];
-          int lf = b.col_ptrs[j + 1];
-
-          while ((ks < kf) && (ls < lf)) {
-            if (at.row_indices[ks] < b.row_indices[ls]) {
-              ks++;
-            } else if (at.row_indices[ks] > b.row_indices[ls]) {
-              ls++;
-            } else {
-              sum += at.values[ks] * b.values[ls];
-              ks++;
-              ls++;
-            }
-          }
-
-          if (IsNonZero(sum)) {
-            rows.push_back(i);
-            vals.push_back(sum);
-          }
-        }
-
-        col_rows[j] = std::move(rows);
-        col_vals[j] = std::move(vals);
+        ProcessColumn(j, at, b, col_rows[j], col_vals[j]);
       }
     });
 
