@@ -1,13 +1,12 @@
 #include "barkalova_m_mult_matrix_ccs/stl/include/ops_stl.hpp"
 
 #include <algorithm>
-#include <atomic>
 #include <cmath>
 #include <complex>
 #include <cstddef>
 #include <exception>
+#include <functional>
 #include <future>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -156,7 +155,8 @@ bool BarkalovaMMultMatrixCcsSTL::RunImpl() {
     c.cols = b.cols;
 
     const int total_cols = c.cols;
-    const unsigned int num_threads = std::max(1u, std::thread::hardware_concurrency());
+    unsigned int hardware_threads = std::thread::hardware_concurrency();
+    const unsigned int num_threads = std::max(1U, hardware_threads);
 
     std::vector<std::vector<int>> col_rows(total_cols);
     std::vector<std::vector<Complex>> col_vals(total_cols);
@@ -164,12 +164,12 @@ bool BarkalovaMMultMatrixCcsSTL::RunImpl() {
     std::vector<std::future<void>> futures;
     futures.reserve(num_threads);
 
-    int cols_per_thread = total_cols / num_threads;
-    int remainder = total_cols % num_threads;
+    int cols_per_thread = total_cols / static_cast<int>(num_threads);
+    int remainder = total_cols % static_cast<int>(num_threads);
     int current_start = 0;
 
-    for (unsigned int t = 0; t < num_threads; ++t) {
-      int cols_for_thread = cols_per_thread + (t < static_cast<unsigned int>(remainder) ? 1 : 0);
+    for (unsigned int thread_idx = 0; thread_idx < num_threads; ++thread_idx) {
+      int cols_for_thread = cols_per_thread + (static_cast<int>(thread_idx) < remainder ? 1 : 0);
       int start = current_start;
       int end = current_start + cols_for_thread;
       current_start = end;
@@ -190,7 +190,7 @@ bool BarkalovaMMultMatrixCcsSTL::RunImpl() {
     std::vector<int> row_indices;
     std::vector<Complex> values;
 
-    for (int j = 0; j < total_cols; j++) {
+    for (int j = 0; j < total_cols; ++j) {
       row_indices.insert(row_indices.end(), col_rows[j].begin(), col_rows[j].end());
       values.insert(values.end(), col_vals[j].begin(), col_vals[j].end());
       col_ptrs.push_back(static_cast<int>(values.size()));
