@@ -7,9 +7,9 @@
 #include <exception>
 #include <functional>
 #include <future>
+#include <thread>
 #include <utility>
 #include <vector>
-#include <thread>
 
 #include "barkalova_m_mult_matrix_ccs/common/include/common.hpp"
 
@@ -150,7 +150,6 @@ bool BarkalovaMMultMatrixCcsSTL::RunImpl() {
   try {
     CCSMatrix at;
     TransponirMatr(a, at);
-
     CCSMatrix c;
     c.rows = a.rows;
     c.cols = b.cols;
@@ -174,14 +173,12 @@ bool BarkalovaMMultMatrixCcsSTL::RunImpl() {
       int start = current_start;
       int end = current_start + cols_for_thread;
       current_start = end;
-
       if (start >= total_cols) {
         break;
       }
 
       futures.push_back(std::async(std::launch::async, ProcessColumnRange, start, end, std::cref(at), std::cref(b), std::ref(col_rows), std::ref(col_vals)));
     }
-
     for (auto &future : futures) {
       future.get();
     }
