@@ -169,7 +169,7 @@ bool BarkalovaMMultMatrixCcsSTL::RunImpl() {
     int current_start = 0;
 
     for (unsigned int thread_idx = 0; thread_idx < num_threads; ++thread_idx) {
-      int cols_for_thread = cols_per_thread + (static_cast<int>(thread_idx) < remainder ? 1 : 0);
+      int cols_for_thread = cols_per_thread + (std::cmp_less(thread_idx, remainder) ? 1 : 0);
       int start = current_start;
       int end = current_start + cols_for_thread;
       current_start = end;
