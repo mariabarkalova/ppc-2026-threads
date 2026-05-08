@@ -116,7 +116,8 @@ TEST_P(BarkalovaMMultMatrixCcsPerfTest, RunPerfModes) {
 namespace {
 
 const auto kAllPerfTasks =
-    ppc::util::MakeAllPerfTasks<InType, BarkalovaMMultMatrixCcsSEQ, BarkalovaMMultMatrixCcsOMP, BarkalovaMMultMatrixCcsSTL>(PPC_SETTINGS_barkalova_m_mult_matrix_ccs);
+    ppc::util::MakeAllPerfTasks<InType, BarkalovaMMultMatrixCcsSEQ, BarkalovaMMultMatrixCcsOMP,
+                                BarkalovaMMultMatrixCcsSTL>(PPC_SETTINGS_barkalova_m_mult_matrix_ccs);
 
 const auto kGtestValues = ppc::util::TupleToGTestValues(kAllPerfTasks);
 
