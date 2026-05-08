@@ -179,8 +179,7 @@ bool BarkalovaMMultMatrixCcsSTL::RunImpl() {
         break;
       }
 
-      futures.push_back(std::async(std::launch::async, ProcessColumnRange, start, end, std::cref(at), std::cref(b),
-                                   std::ref(col_rows), std::ref(col_vals)));
+      futures.push_back(std::async(std::launch::async, ProcessColumnRange, start, end, std::cref(at), std::cref(b), std::ref(col_rows), std::ref(col_vals)));
     }
 
     for (auto &future : futures) {
