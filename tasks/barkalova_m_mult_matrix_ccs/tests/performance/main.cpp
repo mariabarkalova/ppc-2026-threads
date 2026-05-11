@@ -9,6 +9,7 @@
 #include "barkalova_m_mult_matrix_ccs/omp/include/ops_omp.hpp"
 #include "barkalova_m_mult_matrix_ccs/seq/include/ops_seq.hpp"
 #include "barkalova_m_mult_matrix_ccs/tbb/include/ops_tbb.hpp"
+#include "barkalova_m_mult_matrix_ccs/all/include/ops_all.hpp"
 #include "util/include/perf_test_util.hpp"
 
 namespace barkalova_m_mult_matrix_ccs {
@@ -117,7 +118,7 @@ namespace {
 
 const auto kAllPerfTasks =
     ppc::util::MakeAllPerfTasks<InType, BarkalovaMMultMatrixCcsSEQ, BarkalovaMMultMatrixCcsOMP,
-                                BarkalovaMMultMatrixCcsTBB>(PPC_SETTINGS_barkalova_m_mult_matrix_ccs);
+                                BarkalovaMMultMatrixCcsTBB, BarkalovaMMultMatrixCcsALL>(PPC_SETTINGS_barkalova_m_mult_matrix_ccs);
 
 const auto kGtestValues = ppc::util::TupleToGTestValues(kAllPerfTasks);
 
