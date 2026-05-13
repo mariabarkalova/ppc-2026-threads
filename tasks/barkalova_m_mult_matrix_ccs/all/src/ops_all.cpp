@@ -849,8 +849,8 @@ void ComputeLocalColumns(int start_col, int local_cols, const CCSMatrix &at, con
 
 // Выделяем сбор локальных данных в плоские векторы
 void BuildLocalVectors(int local_cols, const std::vector<std::vector<int>> &col_rows,
-                       const std::vector<std::vector<Complex>> &col_vals,
-                       std::vector<int> &local_row_indices, std::vector<Complex> &local_values) {
+                       const std::vector<std::vector<Complex>> &col_vals, std::vector<int> &local_row_indices,
+                       std::vector<Complex> &local_values) {
   for (int j = 0; j < local_cols; ++j) {
     local_row_indices.insert(local_row_indices.end(), col_rows[j].begin(), col_rows[j].end());
     local_values.insert(local_values.end(), col_vals[j].begin(), col_vals[j].end());
@@ -858,13 +858,9 @@ void BuildLocalVectors(int local_cols, const std::vector<std::vector<int>> &col_
 }
 
 // Выделяем MPI сбор данных
-void GatherResults(int rank, int size, int local_nnz,
-                   const std::vector<int> &local_row_indices,
-                   const std::vector<Complex> &local_values,
-                   std::vector<int> &global_row_indices,
-                   std::vector<double> &global_values_real,
-                   std::vector<double> &global_values_imag,
-                   int total_nnz) {
+void GatherResults(int rank, int size, int local_nnz, const std::vector<int> &local_row_indices,
+                   const std::vector<Complex> &local_values, std::vector<int> &global_row_indices,
+                   std::vector<double> &global_values_real, std::vector<double> &global_values_imag, int total_nnz) {
   std::vector<int> recv_counts(size, 0);
   MPI_Gather(&local_nnz, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
 
@@ -879,8 +875,7 @@ void GatherResults(int rank, int size, int local_nnz,
   if (rank == 0) {
     global_row_indices.resize(total_nnz);
   }
-  MPI_Gatherv(local_row_indices.data(), local_nnz, MPI_INT,
-              global_row_indices.data(), recv_counts.data(),
+  MPI_Gatherv(local_row_indices.data(), local_nnz, MPI_INT, global_row_indices.data(), recv_counts.data(),
               displs.data(), MPI_INT, 0, MPI_COMM_WORLD);
 
   // Подготовка complex значений
@@ -895,24 +890,20 @@ void GatherResults(int rank, int size, int local_nnz,
   if (rank == 0) {
     global_values_real.resize(total_nnz);
   }
-  MPI_Gatherv(local_values_real.data(), local_nnz, MPI_DOUBLE,
-              global_values_real.data(), recv_counts.data(),
+  MPI_Gatherv(local_values_real.data(), local_nnz, MPI_DOUBLE, global_values_real.data(), recv_counts.data(),
               displs.data(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
   // Сбор imag частей
   if (rank == 0) {
     global_values_imag.resize(total_nnz);
   }
-  MPI_Gatherv(local_values_imag.data(), local_nnz, MPI_DOUBLE,
-              global_values_imag.data(), recv_counts.data(),
+  MPI_Gatherv(local_values_imag.data(), local_nnz, MPI_DOUBLE, global_values_imag.data(), recv_counts.data(),
               displs.data(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
 }
 
 // Выделяем широковещательную рассылку результата
-void BroadcastResult(int rank, int total_rows, int total_cols, int total_nnz,
-                     std::vector<int> &global_col_ptrs,
-                     std::vector<int> &global_row_indices,
-                     std::vector<double> &global_values_real,
+void BroadcastResult(int rank, int total_rows, int total_cols, int total_nnz, std::vector<int> &global_col_ptrs,
+                     std::vector<int> &global_row_indices, std::vector<double> &global_values_real,
                      std::vector<double> &global_values_imag) {
   int bcast_rows = total_rows;
   int bcast_cols = total_cols;
@@ -1006,13 +997,12 @@ bool BarkalovaMMultMatrixCcsALL::RunImpl() {
     std::vector<int> global_row_indices;
     std::vector<double> global_values_real;
     std::vector<double> global_values_imag;
-    GatherResults(rank, size, local_nnz, local_row_indices, local_values,
-                  global_row_indices, global_values_real, global_values_imag, total_nnz);
+    GatherResults(rank, size, local_nnz, local_row_indices, local_values, global_row_indices, global_values_real,
+                  global_values_imag, total_nnz);
 
     // Широковещательная рассылка результата
-    BroadcastResult(rank, total_rows, total_cols, total_nnz,
-                    global_col_ptrs, global_row_indices,
-                    global_values_real, global_values_imag);
+    BroadcastResult(rank, total_rows, total_cols, total_nnz, global_col_ptrs, global_row_indices, global_values_real,
+                    global_values_imag);
 
     // Собираем complex значения на всех процессах
     std::vector<Complex> global_values(total_nnz);
