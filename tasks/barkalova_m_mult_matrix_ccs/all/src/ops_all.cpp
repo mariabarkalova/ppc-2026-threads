@@ -705,6 +705,7 @@ bool BarkalovaMMultMatrixCcsALL::PostProcessingImpl() {
 
 #include <mpi.h>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -821,6 +822,129 @@ Complex ComputeScalarProduct(const CCSMatrix &at, const CCSMatrix &b, int row_a,
   return sum;
 }
 
+// Выделяем вычисление локальных столбцов в отдельную функцию
+void ComputeLocalColumns(int start_col, int local_cols, const CCSMatrix &at, const CCSMatrix &b,
+                         std::vector<std::vector<int>> &col_rows, std::vector<std::vector<Complex>> &col_vals) {
+#pragma omp parallel for schedule(static) default(none) shared(start_col, local_cols, at, b, col_rows, col_vals)
+  for (int j_local = 0; j_local < local_cols; ++j_local) {
+    int global_col = start_col + j_local;
+
+    std::vector<int> rows;
+    std::vector<Complex> vals;
+    rows.reserve(100);
+    vals.reserve(100);
+
+    for (int i = 0; i < at.cols; i++) {
+      Complex sum = ComputeScalarProduct(at, b, i, global_col);
+      if (IsNonZero(sum)) {
+        rows.push_back(i);
+        vals.push_back(sum);
+      }
+    }
+
+    col_rows[j_local] = std::move(rows);
+    col_vals[j_local] = std::move(vals);
+  }
+}
+
+// Выделяем сбор локальных данных в плоские векторы
+void BuildLocalVectors(int local_cols, const std::vector<std::vector<int>> &col_rows,
+                       const std::vector<std::vector<Complex>> &col_vals,
+                       std::vector<int> &local_row_indices, std::vector<Complex> &local_values) {
+  for (int j = 0; j < local_cols; ++j) {
+    local_row_indices.insert(local_row_indices.end(), col_rows[j].begin(), col_rows[j].end());
+    local_values.insert(local_values.end(), col_vals[j].begin(), col_vals[j].end());
+  }
+}
+
+// Выделяем MPI сбор данных
+void GatherResults(int rank, int size, int local_nnz,
+                   const std::vector<int> &local_row_indices,
+                   const std::vector<Complex> &local_values,
+                   std::vector<int> &global_row_indices,
+                   std::vector<double> &global_values_real,
+                   std::vector<double> &global_values_imag,
+                   int total_nnz) {
+  std::vector<int> recv_counts(size, 0);
+  MPI_Gather(&local_nnz, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+  std::vector<int> displs(size, 0);
+  if (rank == 0) {
+    for (int i = 1; i < size; ++i) {
+      displs[i] = displs[i - 1] + recv_counts[i - 1];
+    }
+  }
+
+  // Сбор row_indices
+  if (rank == 0) {
+    global_row_indices.resize(total_nnz);
+  }
+  MPI_Gatherv(local_row_indices.data(), local_nnz, MPI_INT,
+              global_row_indices.data(), recv_counts.data(),
+              displs.data(), MPI_INT, 0, MPI_COMM_WORLD);
+
+  // Подготовка complex значений
+  std::vector<double> local_values_real(local_nnz);
+  std::vector<double> local_values_imag(local_nnz);
+  for (int i = 0; i < local_nnz; ++i) {
+    local_values_real[i] = local_values[i].real();
+    local_values_imag[i] = local_values[i].imag();
+  }
+
+  // Сбор real частей
+  if (rank == 0) {
+    global_values_real.resize(total_nnz);
+  }
+  MPI_Gatherv(local_values_real.data(), local_nnz, MPI_DOUBLE,
+              global_values_real.data(), recv_counts.data(),
+              displs.data(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+  // Сбор imag частей
+  if (rank == 0) {
+    global_values_imag.resize(total_nnz);
+  }
+  MPI_Gatherv(local_values_imag.data(), local_nnz, MPI_DOUBLE,
+              global_values_imag.data(), recv_counts.data(),
+              displs.data(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+}
+
+// Выделяем широковещательную рассылку результата
+void BroadcastResult(int rank, int total_rows, int total_cols, int total_nnz,
+                     std::vector<int> &global_col_ptrs,
+                     std::vector<int> &global_row_indices,
+                     std::vector<double> &global_values_real,
+                     std::vector<double> &global_values_imag) {
+  int bcast_rows = total_rows;
+  int bcast_cols = total_cols;
+  int bcast_nnz = total_nnz;
+
+  MPI_Bcast(&bcast_rows, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Bcast(&bcast_cols, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Bcast(&bcast_nnz, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+  // col_ptrs
+  int col_ptrs_size = static_cast<int>(global_col_ptrs.size());
+  MPI_Bcast(&col_ptrs_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  if (rank != 0) {
+    global_col_ptrs.resize(col_ptrs_size);
+  }
+  MPI_Bcast(global_col_ptrs.data(), col_ptrs_size, MPI_INT, 0, MPI_COMM_WORLD);
+
+  // row_indices
+  if (rank != 0) {
+    global_row_indices.resize(bcast_nnz);
+  }
+  MPI_Bcast(global_row_indices.data(), bcast_nnz, MPI_INT, 0, MPI_COMM_WORLD);
+
+  // values_real и values_imag
+  if (rank != 0) {
+    global_values_real.resize(bcast_nnz);
+    global_values_imag.resize(bcast_nnz);
+  }
+  MPI_Bcast(global_values_real.data(), bcast_nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Bcast(global_values_imag.data(), bcast_nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+}
+
 }  // namespace
 
 bool BarkalovaMMultMatrixCcsALL::RunImpl() {
@@ -828,8 +952,9 @@ bool BarkalovaMMultMatrixCcsALL::RunImpl() {
   const auto &b = GetInput().second;
 
   try {
-    // Получаем rank и size
-    int rank, size;
+    // Получаем rank и size (инициализируем нулями)
+    int rank = 0;
+    int size = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
@@ -844,46 +969,24 @@ bool BarkalovaMMultMatrixCcsALL::RunImpl() {
     int cols_per_process = total_cols / size;
     int remainder = total_cols % size;
 
-    int start_col = rank * cols_per_process + std::min(rank, remainder);
+    // Добавляем скобки для порядка операций
+    int start_col = (rank * cols_per_process) + std::min(rank, remainder);
     int local_cols = cols_per_process + (rank < remainder ? 1 : 0);
 
     // Локальные данные для каждого MPI процесса
     std::vector<std::vector<int>> col_rows(local_cols);
     std::vector<std::vector<Complex>> col_vals(local_cols);
 
-// OMP параллелизация внутри MPI процесса
-#pragma omp parallel for schedule(static) default(none) shared(local_cols, start_col, at, b, col_rows, col_vals)
-    for (int j_local = 0; j_local < local_cols; ++j_local) {
-      int global_col = start_col + j_local;
+    // Вычисление локальных столбцов
+    ComputeLocalColumns(start_col, local_cols, at, b, col_rows, col_vals);
 
-      std::vector<int> rows;
-      std::vector<Complex> vals;
-      rows.reserve(100);
-      vals.reserve(100);
-
-      for (int i = 0; i < at.cols; i++) {
-        Complex sum = ComputeScalarProduct(at, b, i, global_col);
-        if (IsNonZero(sum)) {
-          rows.push_back(i);
-          vals.push_back(sum);
-        }
-      }
-
-      col_rows[j_local] = std::move(rows);
-      col_vals[j_local] = std::move(vals);
-    }
-
-    // Сборка локальных данных (сразу в плоские векторы)
+    // Сборка локальных данных в плоские векторы
     std::vector<int> local_row_indices;
     std::vector<Complex> local_values;
-
-    for (int j = 0; j < local_cols; ++j) {
-      local_row_indices.insert(local_row_indices.end(), col_rows[j].begin(), col_rows[j].end());
-      local_values.insert(local_values.end(), col_vals[j].begin(), col_vals[j].end());
-    }
+    BuildLocalVectors(local_cols, col_rows, col_vals, local_row_indices, local_values);
     int local_nnz = static_cast<int>(local_values.size());
 
-    // Сбор количества ненулевых элементов для каждого столбца (нужно для col_ptrs)
+    // Сбор количества ненулевых элементов для каждого столбца
     std::vector<int> global_col_nnz(total_cols, 0);
     for (int j = 0; j < local_cols; ++j) {
       global_col_nnz[start_col + j] = static_cast<int>(col_rows[j].size());
@@ -892,101 +995,36 @@ bool BarkalovaMMultMatrixCcsALL::RunImpl() {
     std::vector<int> recv_col_nnz(total_cols);
     MPI_Allreduce(global_col_nnz.data(), recv_col_nnz.data(), total_cols, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
-    // Формируем глобальные col_ptrs (все процессы строят одинаково)
+    // Формируем глобальные col_ptrs
     std::vector<int> global_col_ptrs = {0};
     for (int j = 0; j < total_cols; ++j) {
       global_col_ptrs.push_back(global_col_ptrs.back() + recv_col_nnz[j]);
     }
     int total_nnz = global_col_ptrs.back();
 
-    // === СБОР ДАННЫХ С ИСПОЛЬЗОВАНИЕМ MPI_GATHERV ===
-
-    // 1. Собираем количество nnz от всех процессов на процесс 0
-    std::vector<int> recv_counts(size, 0);
-    MPI_Gather(&local_nnz, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-    // 2. Вычисляем смещения на процессе 0
-    std::vector<int> displs(size, 0);
-    if (rank == 0) {
-      for (int i = 1; i < size; ++i) {
-        displs[i] = displs[i - 1] + recv_counts[i - 1];
-      }
-    }
-
-    // 3. Сбор row_indices
+    // Сбор данных через MPI
     std::vector<int> global_row_indices;
-    if (rank == 0) {
-      global_row_indices.resize(total_nnz);
-    }
-    MPI_Gatherv(local_row_indices.data(), local_nnz, MPI_INT, global_row_indices.data(), recv_counts.data(),
-                displs.data(), MPI_INT, 0, MPI_COMM_WORLD);
-
-    // 4. Подготовка complex значений (разбиваем на real и imag)
-    std::vector<double> local_values_real(local_nnz), local_values_imag(local_nnz);
-    for (int i = 0; i < local_nnz; ++i) {
-      local_values_real[i] = local_values[i].real();
-      local_values_imag[i] = local_values[i].imag();
-    }
-
-    // 5. Сбор real частей
     std::vector<double> global_values_real;
-    if (rank == 0) {
-      global_values_real.resize(total_nnz);
-    }
-    MPI_Gatherv(local_values_real.data(), local_nnz, MPI_DOUBLE, global_values_real.data(), recv_counts.data(),
-                displs.data(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
-
-    // 6. Сбор imag частей
     std::vector<double> global_values_imag;
-    if (rank == 0) {
-      global_values_imag.resize(total_nnz);
-    }
-    MPI_Gatherv(local_values_imag.data(), local_nnz, MPI_DOUBLE, global_values_imag.data(), recv_counts.data(),
-                displs.data(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    GatherResults(rank, size, local_nnz, local_row_indices, local_values,
+                  global_row_indices, global_values_real, global_values_imag, total_nnz);
 
-    // === ШИРОКОВЕЩАТЕЛЬНАЯ РАССЫЛКА ВСЕМ ПРОЦЕССАМ ===
-
-    int bcast_rows = total_rows;
-    int bcast_cols = total_cols;
-    int bcast_nnz = total_nnz;
-
-    MPI_Bcast(&bcast_rows, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&bcast_cols, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&bcast_nnz, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-    // col_ptrs
-    int col_ptrs_size = static_cast<int>(global_col_ptrs.size());
-    MPI_Bcast(&col_ptrs_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    if (rank != 0) {
-      global_col_ptrs.resize(col_ptrs_size);
-    }
-    MPI_Bcast(global_col_ptrs.data(), col_ptrs_size, MPI_INT, 0, MPI_COMM_WORLD);
-
-    // row_indices
-    if (rank != 0) {
-      global_row_indices.resize(bcast_nnz);
-    }
-    MPI_Bcast(global_row_indices.data(), bcast_nnz, MPI_INT, 0, MPI_COMM_WORLD);
-
-    // values_real и values_imag
-    if (rank != 0) {
-      global_values_real.resize(bcast_nnz);
-      global_values_imag.resize(bcast_nnz);
-    }
-    MPI_Bcast(global_values_real.data(), bcast_nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(global_values_imag.data(), bcast_nnz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    // Широковещательная рассылка результата
+    BroadcastResult(rank, total_rows, total_cols, total_nnz,
+                    global_col_ptrs, global_row_indices,
+                    global_values_real, global_values_imag);
 
     // Собираем complex значения на всех процессах
-    std::vector<Complex> global_values(bcast_nnz);
-    for (int i = 0; i < bcast_nnz; ++i) {
+    std::vector<Complex> global_values(total_nnz);
+    for (int i = 0; i < total_nnz; ++i) {
       global_values[i] = Complex(global_values_real[i], global_values_imag[i]);
     }
 
     // Формируем итоговую матрицу
     CCSMatrix c;
-    c.rows = bcast_rows;
-    c.cols = bcast_cols;
-    c.nnz = bcast_nnz;
+    c.rows = total_rows;
+    c.cols = total_cols;
+    c.nnz = total_nnz;
     c.values = std::move(global_values);
     c.row_indices = std::move(global_row_indices);
     c.col_ptrs = std::move(global_col_ptrs);
@@ -1023,8 +1061,8 @@ bool BarkalovaMMultMatrixCcsALL::PostProcessingImpl() {
     }
   }
 
-  // Проверка соответствия nnz
-  if (c.nnz != static_cast<int>(c.values.size()) || c.nnz != static_cast<int>(c.row_indices.size())) {
+  // Проверка соответствия nnz (используем std::cmp_not_equal)
+  if (std::cmp_not_equal(c.nnz, c.values.size()) || std::cmp_not_equal(c.nnz, c.row_indices.size())) {
     return false;
   }
 
