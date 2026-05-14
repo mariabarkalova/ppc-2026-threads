@@ -138,8 +138,8 @@ void ComputeLocalColumns(int start_col, int local_cols, const CCSMatrix &at, con
 }
 
 void LocVectors(int local_cols, const std::vector<std::vector<int>> &col_rows,
-                       const std::vector<std::vector<Complex>> &col_vals, std::vector<int> &local_row_indices,
-                       std::vector<Complex> &local_values) {
+                const std::vector<std::vector<Complex>> &col_vals, std::vector<int> &local_row_indices,
+                std::vector<Complex> &local_values) {
   for (int j = 0; j < local_cols; ++j) {
     local_row_indices.insert(local_row_indices.end(), col_rows[j].begin(), col_rows[j].end());
     local_values.insert(local_values.end(), col_vals[j].begin(), col_vals[j].end());
@@ -186,8 +186,8 @@ void GatherResults(int rank, int size, int local_nnz, const std::vector<int> &lo
 }
 
 void BroadcastRes(int rank, int total_rows, int total_cols, int total_nnz, std::vector<int> &global_col_ptrs,
-                     std::vector<int> &global_row_indices, std::vector<double> &global_values_real,
-                     std::vector<double> &global_values_imag) {
+                  std::vector<int> &global_row_indices, std::vector<double> &global_values_real,
+                  std::vector<double> &global_values_imag) {
   int bcast_rows = total_rows;
   int bcast_cols = total_cols;
   int bcast_nnz = total_nnz;
@@ -271,7 +271,7 @@ bool BarkalovaMMultMatrixCcsALL::RunImpl() {
                   global_values_imag, total_nnz);
 
     BroadcastRes(rank, total_rows, total_cols, total_nnz, global_col_ptrs, global_row_indices, global_values_real,
-                    global_values_imag);
+                 global_values_imag);
 
     std::vector<Complex> global_values(total_nnz);
     for (int i = 0; i < total_nnz; ++i) {
