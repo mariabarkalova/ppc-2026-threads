@@ -323,6 +323,10 @@ bool BarkalovaMMultMatrixCcsALL::PostProcessingImpl() {
 }  // namespace barkalova_m_mult_matrix_ccs
 */
 
+
+
+
+
 #include "barkalova_m_mult_matrix_ccs/all/include/ops_all.hpp"
 
 #include <mpi.h>
@@ -334,6 +338,7 @@ bool BarkalovaMMultMatrixCcsALL::PostProcessingImpl() {
 #include <exception>
 #include <utility>
 #include <vector>
+#include <array>
 
 #include "barkalova_m_mult_matrix_ccs/common/include/common.hpp"
 
@@ -429,11 +434,12 @@ void BroadcastMatrix(CCSMatrix &matrix) {
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-  int meta[4] = {matrix.rows, matrix.cols, matrix.nnz, 0};
+  // Используем std::array вместо C-style массива
+  std::array<int, 4> meta = {matrix.rows, matrix.cols, matrix.nnz, 0};
   if (rank == 0) {
     meta[3] = static_cast<int>(matrix.col_ptrs.size());
   }
-  MPI_Bcast(meta, 4, MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Bcast(meta.data(), 4, MPI_INT, 0, MPI_COMM_WORLD);  // .data() вместо имени массива
 
   matrix.rows = meta[0];
   matrix.cols = meta[1];
@@ -454,7 +460,6 @@ void BroadcastMatrix(CCSMatrix &matrix) {
   }
 
   MPI_Bcast(matrix.col_ptrs.data(), col_ptrs_size, MPI_INT, 0, MPI_COMM_WORLD);
-
   MPI_Bcast(matrix.row_indices.data(), matrix.nnz, MPI_INT, 0, MPI_COMM_WORLD);
 
   std::vector<double> values_real(matrix.nnz);
