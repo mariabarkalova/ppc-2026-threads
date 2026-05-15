@@ -323,9 +323,6 @@ bool BarkalovaMMultMatrixCcsALL::PostProcessingImpl() {
 }  // namespace barkalova_m_mult_matrix_ccs
 */
 
-
-
-
 #include "barkalova_m_mult_matrix_ccs/all/include/ops_all.hpp"
 
 #include <mpi.h>
@@ -344,25 +341,25 @@ namespace barkalova_m_mult_matrix_ccs {
 
 BarkalovaMMultMatrixCcsALL::BarkalovaMMultMatrixCcsALL(const InType &in) {
   SetTypeOfTask(GetStaticTypeOfTask());
-  
+
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  
+
   if (rank == 0) {
     GetInput() = in;
   }
-  
+
   GetOutput() = CCSMatrix{};
 }
 
 bool BarkalovaMMultMatrixCcsALL::ValidationImpl() {
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  
+
   if (rank != 0) {
     return true;
   }
-  
+
   const auto &[A, B] = GetInput();
   if (A.cols != B.rows) {
     return false;
@@ -691,15 +688,14 @@ bool BarkalovaMMultMatrixCcsALL::RunImpl() {
   }
 }
 
-
 bool BarkalovaMMultMatrixCcsALL::PostProcessingImpl() {
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  
+
   if (rank != 0) {
     return true;
   }
-  
+
   const auto &c = GetOutput();
   if (c.rows <= 0 || c.cols <= 0) {
     return false;
