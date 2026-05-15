@@ -323,22 +323,18 @@ bool BarkalovaMMultMatrixCcsALL::PostProcessingImpl() {
 }  // namespace barkalova_m_mult_matrix_ccs
 */
 
-
-
-
-
 #include "barkalova_m_mult_matrix_ccs/all/include/ops_all.hpp"
 
 #include <mpi.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <cstddef>
 #include <exception>
 #include <utility>
 #include <vector>
-#include <array>
 
 #include "barkalova_m_mult_matrix_ccs/common/include/common.hpp"
 
